@@ -1,0 +1,64 @@
+name: race-probe
+
+# The PR side of the late-run race test. Only race-test.yml's throwaway PRs
+# (branches race-probe/*) run these jobs; every other PR shows them skipped.
+#
+# race-test.sh lets this run once with the PR open, squash-merges the PR into
+# a throwaway base branch, deletes the head branch, and re-runs the run the
+# merge fired (`closed`). That run was created after the squash merge, so its
+# sha is the squash commit and the merge ref is gone: the homelab#2077 race
+# (see tests/race-test.sh for the shapes that do not reproduce it):
+#   fixed   - this commit's action; must still scan the PR's commits
+#   control - the template before the fix; must die on 'unknown revision',
+#             which proves the race really was staged
+
+on:
+  pull_request:
+    # opened etc. for the sanity run; closed is the late run (fired by the merge)
+    types: [opened, synchronize, reopened, closed]
+
+permissions:
+  contents: read
+  pull-requests: read  # gitleaks-action lists PR commits via the API
+
+jobs:
+  fixed:
+    if: startsWith(github.head_ref, 'race-probe/')
+    runs-on: ubuntu-latest
+    steps:
+      # Load the action under test into a subdirectory and drop its .git.
+      # Otherwise the PR's commits would already sit in the object store and
+      # a broken checkout in the action could still find them.
+      - name: Load the action under test
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: _action
+          persist-credentials: false
+      - run: rm -rf _action/.git && cp -r _action "$RUNNER_TEMP/action"
+      - uses: ./_action
+      # The action's checkout empties the workspace, _action included, and the
+      # runner re-reads _action/action.yml for the post step at job end.
+      - name: Put the action back for its post step
+        run: cp -r "$RUNNER_TEMP/action" _action
+      - name: HEAD is the PR head
+        env:
+          WANT: ${{ github.event.pull_request.head.sha }}
+        run: |
+          got=$(git rev-parse HEAD)
+          echo "HEAD=$got want=$WANT"
+          [ "$got" = "$WANT" ] || { echo "::error::checked out $got, expected $WANT"; exit 1; }
+
+  control:
+    if: startsWith(github.head_ref, 'race-probe/')
+    runs-on: ubuntu-latest
+    steps:
+      # The fleet template before homelab#2081, kept here as is (homelab
+      # bin/secret-scan-previous-templates). Third-party actions are pinned by
+      # SHA (homelab D-042); the behaviour under test is the default checkout ref.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

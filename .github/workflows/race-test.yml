@@ -1,0 +1,78 @@
+name: race-test
+
+# End-to-end test of the late-run race (homelab#2079): a pull_request run that
+# starts after its PR is gone. tests/race-test.sh stages it for real with a
+# throwaway PR and race-probe.yml; see both for the steps and assertions.
+#
+# Runs on PRs that touch the action or this test, on demand, and before every
+# release (release.yaml calls it), because moving v1 ships to every repo.
+#
+# Self-hosted: the CICD App token comes from Infisical, which is only reachable
+# in-cluster. The runner (argocd-projects arc/arc-deploy-runners.yaml) is in the
+# arc-isolated tier, and fork PRs need approval for every external
+# contributor; fork PRs get no secrets either way, so the job skips them.
+
+on:
+  pull_request:
+    paths:
+      - action.yml
+      - .github/workflows/race-probe.yml
+      - .github/workflows/race-test.yml
+      - tests/race-test.sh
+  workflow_dispatch:
+  workflow_call:
+
+concurrency:
+  group: race-test
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  late-run:
+    # Not on forks (no secrets), and not on the throwaway PRs this job opens.
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+       !startsWith(github.head_ref, 'race-probe/'))
+    runs-on: secret-scan-action-runner
+    timeout-minutes: 30
+    steps:
+      - name: Fetch secrets from Infisical
+        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
+        with:
+          client-id: ${{ secrets.INFISICAL_CLIENT_ID }}
+          client-secret: ${{ secrets.INFISICAL_CLIENT_SECRET }}
+          env-slug: prod
+          project-slug: homelab-bz-gt
+          secret-path: /
+          export-type: env
+          domain: http://infisical-infisical-standalone-infisical.infisical.svc.cluster.local:8080
+
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        id: app-token
+        with:
+          client-id: ${{ env.CICD_APP_CLIENT_ID }}
+          private-key: ${{ env.CICD_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-actions: write
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Stage the race and check both arms
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          # The throwaway PR starts from the code under test.
+          BASE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          TAG: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -o pipefail
+          bash tests/race-test.sh | tee "$RUNNER_TEMP/race.log"
+          grep -q '^RACE-TEST-COMPLETE ' "$RUNNER_TEMP/race.log"
