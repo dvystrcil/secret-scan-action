@@ -65,10 +65,26 @@ gh workflow run release.yaml --repo dvystrcil/secret-scan-action -f bump=major
 gh workflow run release.yaml --repo dvystrcil/secret-scan-action -f bump=patch
 ```
 
-If the checkout step changes, redo the late-run reproduction before releasing:
-open a throwaway PR, let its scan pass, close it with `--delete-branch`, confirm
-`git ls-remote origin 'refs/pull/<n>/*'` shows only `head`, then re-run the scan.
-It must still check out the PR head and scan a non-zero number of commits.
+Every release first runs the late-run race test (`race-test.yml`, called by
+`release.yaml`); if it fails, `v1` does not move. It also runs on any PR that
+touches `action.yml` or the test, and on demand:
+`gh workflow run race-test.yml --repo dvystrcil/secret-scan-action`.
+
+The test stages the race for real (`tests/race-test.sh`):
+
+1. It opens a throwaway PR (`race-probe/*`) from the code under test.
+   `race-probe.yml` passes on it in both arms.
+2. It closes the PR, deletes the branch, and waits until `refs/pull/N/merge` is gone.
+3. It re-runs the probe, so the run starts after its PR is gone.
+4. The re-run must show:
+   - **fixed** (this commit's action) passes, having scanned at least 1 commit.
+   - **control** (the template before the fix) fails with `unknown revision`.
+     This is the proof that the race really was staged.
+
+It needs the CICD App token from the in-cluster Infisical, so it runs on
+`secret-scan-action-runner` (argocd-projects `arc/arc-deploy-runners.yaml`,
+arc-isolated tier). Fork PRs need approval for every external contributor and
+get no secrets, so they skip it.
 
 **Rollback:** `git tag -f v1 <previous sha> && git push --force origin refs/tags/v1`.
 

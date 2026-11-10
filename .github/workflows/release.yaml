@@ -20,7 +20,17 @@ permissions:
   contents: write
 
 jobs:
+  # Moving v1 ships to every repo at once: stage the late-run race first
+  # (race-test.yml). A red race test means no release.
+  race-test:
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/race-test.yml
+    secrets: inherit
+    permissions:
+      contents: read
+
   release:
+    needs: race-test
     # Dispatch lets you pick any branch; a release from one would point v1,
     # and every consumer, at unmerged code.
     if: github.ref == 'refs/heads/main'

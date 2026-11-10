@@ -6,9 +6,8 @@ name: Self-test
 # the first PR commit's parent.
 #
 # The late-run race itself (run starts after merge, branch and merge ref gone)
-# can't be staged inside one run; it was reproduced live for homelab#2079 by
-# closing a PR, deleting its branch and re-running its scan. Redo that before
-# moving v1 if the checkout step changes.
+# can't be staged inside one run: race-test.yml stages it across a throwaway
+# PR, and release.yaml runs it before moving v1.
 
 on:
   pull_request:
