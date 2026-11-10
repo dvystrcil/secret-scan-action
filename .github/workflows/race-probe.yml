@@ -31,8 +31,12 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           path: _action
           persist-credentials: false
-      - run: rm -rf _action/.git
+      - run: rm -rf _action/.git && cp -r _action "$RUNNER_TEMP/action"
       - uses: ./_action
+      # The action's checkout empties the workspace, _action included, and the
+      # runner re-reads _action/action.yml for the post step at job end.
+      - name: Put the action back for its post step
+        run: cp -r "$RUNNER_TEMP/action" _action
       - name: HEAD is the PR head
         env:
           WANT: ${{ github.event.pull_request.head.sha }}
