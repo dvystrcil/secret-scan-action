@@ -129,11 +129,14 @@ control=$(job_field "$RUN" control conclusion)
 echo "attempt 2 fixed: $fixed, control: $control"
 
 [ "$control" = failure ] || fail "control is '$control', expected failure: the race was not staged"
-job_log "$RUN" control | grep -q 'unknown revision' \
+# Capture first: `job_log | grep -q` dies of SIGPIPE under pipefail on a match.
+control_log=$(job_log "$RUN" control)
+grep -q 'unknown revision' <<<"$control_log" \
   || fail "control failed, but not on 'unknown revision': the race was not what failed it"
 
 [ "$fixed" = success ] || fail "fixed is '$fixed' after the PR merged: the action does not survive the race"
-scanned=$(job_log "$RUN" fixed | grep -oE '[0-9]+ commits? scanned' | grep -oE '^[0-9]+' | tail -1)
+fixed_log=$(job_log "$RUN" fixed)
+scanned=$(grep -oE '[0-9]+ commits? scanned' <<<"$fixed_log" | grep -oE '^[0-9]+' | tail -1)
 [ "${scanned:-0}" -ge 1 ] || fail "fixed passed but scanned '${scanned:-nothing}' commits"
 
 echo "RACE-TEST-COMPLETE pr=$PR run=$RUN fixed_commits_scanned=$scanned control=unknown-revision"
