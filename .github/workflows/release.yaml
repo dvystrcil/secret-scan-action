@@ -1,0 +1,37 @@
+# Release this action: the next vX.Y.Z with auto-generated release notes, and
+# v1 moved to the same commit. Moving v1 IS the release to every consumer
+# (every repo with secret scanning pins @v1), so it is a decision, not a side effect of merging:
+#   gh workflow run release.yaml --repo dvystrcil/secret-scan-action -f bump=patch
+# A major bump creates v2 and leaves v1 alone (dvystrcil/release-action).
+# Rollback: git tag -f v1 <previous sha> && git push --force origin refs/tags/v1
+
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: patch, minor or major
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    # Dispatch lets you pick any branch; a release from one would point v1,
+    # and every consumer, at unmerged code.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - id: release
+        uses: dvystrcil/release-action@v0.2.1
+        with:
+          token: ${{ github.token }}
+          bump: ${{ inputs.bump }}
+          move-major-tag: true
+          # No release yet: the first dispatch uses bump=major (v0.0.0 -> v1.0.0,
+          # and creates v1). After that, patch/minor move v1 forward.
+      - run: echo "released ${{ steps.release.outputs.tag }}; ${{ steps.release.outputs.major-tag }} moved"

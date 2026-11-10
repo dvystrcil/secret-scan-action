@@ -1,0 +1,27 @@
+name: secret-scan
+description: >
+  gitleaks secret scan for homelab repos. Checks out the PR's own head commit
+  (not the default merge ref) with full history, then runs gitleaks-action.
+  A pull_request run can start after the PR already merged; by then the head
+  branch is auto-deleted and refs/pull/N/merge is gone, so a default checkout
+  falls back to main and gitleaks dies on 'unknown revision' having scanned
+  0 bytes (homelab#2079). refs/pull/N/head survives the merge.
+
+inputs:
+  github-token:
+    description: Token gitleaks-action uses to list the PR's commits.
+    default: ${{ github.token }}
+
+runs:
+  using: composite
+  steps:
+    - name: Check out the PR head with full history
+      uses: actions/checkout@v7
+      with:
+        fetch-depth: 0  # gitleaks scans <first PR commit>^..<head>
+        ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+    - name: Scan for secrets
+      uses: gitleaks/gitleaks-action@v3.0.0  # pin the tag
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
