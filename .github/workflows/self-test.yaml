@@ -1,0 +1,42 @@
+name: Self-test
+
+# What this action adds over calling gitleaks-action directly is WHICH commit
+# it checks out. Assert that on every PR: after the action runs, HEAD must be
+# the PR's head SHA (not the merge ref, not main) and the history must reach
+# the first PR commit's parent.
+#
+# The late-run race itself (run starts after merge, branch and merge ref gone)
+# can't be staged inside one run; it was reproduced live for homelab#2079 by
+# closing a PR, deleting its branch and re-running its scan. Redo that before
+# moving v1 if the checkout step changes.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  checks-out-the-pr-head:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./
+      - name: HEAD is the PR head (or the pushed commit), with full history
+        env:
+          WANT: ${{ github.event.pull_request.head.sha || github.sha }}
+          BASE: ${{ github.event.pull_request.base.sha || '' }}
+        run: |
+          set -euo pipefail
+          got=$(git rev-parse HEAD)
+          echo "HEAD=$got want=$WANT"
+          [ "$got" = "$WANT" ] || { echo "::error::checked out $got, expected $WANT"; exit 1; }
+          [ "$(git rev-parse --is-shallow-repository)" = false ] || { echo "::error::shallow clone"; exit 1; }
+          if [ -n "$BASE" ]; then
+            first=$(git rev-list --reverse "$BASE..$WANT" | head -1)
+            git rev-parse --verify "$first^" >/dev/null || { echo "::error::$first^ missing"; exit 1; }
+          fi
+          echo "self-test passed"
