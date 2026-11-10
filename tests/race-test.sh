@@ -2,11 +2,20 @@
 # Stage the late-run race (homelab#2079) for real and check both arms of
 # .github/workflows/race-probe.yml.
 #
-#   1. branch race-probe/$TAG at $BASE_SHA plus one commit; open a PR
+#   1. base branch race-base/$TAG at $BASE_SHA; head branch race-probe/$TAG
+#      = $BASE_SHA plus one commit; open a PR head -> base
 #   2. its race-probe run must pass: fixed AND control (the control works
 #      while the PR exists, so its later failure is the race, not a broken job)
-#   3. close the PR, delete the branch, wait until refs/pull/N/merge is gone
-#   4. re-run the probe: a pull_request run starting after its PR is gone
+#   3. SQUASH-MERGE it into race-base, delete the head branch, wait until
+#      refs/pull/N/merge is gone
+#   4. re-run the probe: a pull_request run starting after its PR merged
+#
+# Why a squash merge and not a close: after a squash merge the run's sha is
+# the squash commit, which does not contain the PR's commits, so a default
+# checkout can't reach them (homelab#2077's real failure). A merely CLOSED
+# PR's test merge commit stays fetchable by sha, and the pre-fix template
+# passes (tried 2026-11-10, run 42875520650). Merging into a throwaway base
+# branch keeps main untouched; it is deleted afterwards.
 #   5. fixed must pass having scanned >= 1 commit; control must fail with
 #      'unknown revision', which shows the race was really staged
 #
@@ -17,6 +26,7 @@ set -euo pipefail
 
 : "${GH_TOKEN:?}" "${REPO:?}" "${BASE_SHA:?}" "${TAG:?}"
 BRANCH="race-probe/$TAG"
+BASE="race-base/$TAG"
 WAIT=${RACE_TEST_WAIT_SECONDS:-900}
 PR=""
 
@@ -25,6 +35,7 @@ fail() { echo "::error::$*"; exit 1; }
 cleanup() {
   [ -n "$PR" ] && gh pr close "$PR" --repo "$REPO" >/dev/null 2>&1 || true
   gh api -X DELETE "repos/$REPO/git/refs/heads/$BRANCH" >/dev/null 2>&1 || true
+  gh api -X DELETE "repos/$REPO/git/refs/heads/$BASE" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
@@ -62,14 +73,15 @@ job_log() {  # run, job name -> log without colour codes
 }
 
 echo "== 1. throwaway PR from $BASE_SHA"
+gh api -X POST "repos/$REPO/git/refs" -f ref="refs/heads/$BASE" -f sha="$BASE_SHA" >/dev/null
 gh api -X POST "repos/$REPO/git/refs" -f ref="refs/heads/$BRANCH" -f sha="$BASE_SHA" >/dev/null
 PROBE_SHA=$(gh api -X PUT "repos/$REPO/contents/race-probe/$TAG.txt" \
   -f message="race-probe $TAG (throwaway, closed by race-test)" \
   -f content="$(printf 'race-probe %s\n' "$TAG" | base64)" \
   -f branch="$BRANCH" --jq .commit.sha)
-PR=$(gh pr create --repo "$REPO" --base main --head "$BRANCH" \
+PR=$(gh pr create --repo "$REPO" --base "$BASE" --head "$BRANCH" \
   --title "race-probe $TAG (throwaway)" \
-  --body "Opened by the race-test workflow; it closes this PR and deletes the branch itself." \
+  --body "Opened by the race-test workflow; it squash-merges this PR into its own throwaway base branch and deletes both branches." \
   | grep -oE '[0-9]+$')
 echo "PR #$PR, probe commit $PROBE_SHA"
 
@@ -82,9 +94,10 @@ for job in fixed control; do
   [ "$c" = success ] || fail "attempt 1: $job is '$c', expected success (PR still open)"
 done
 
-echo "== 3. close, delete branch, wait for the merge ref to go"
-gh pr close "$PR" --repo "$REPO" >/dev/null
-gh api -X DELETE "repos/$REPO/git/refs/heads/$BRANCH" >/dev/null
+echo "== 3. squash-merge into $BASE, delete the head branch, wait for the merge ref to go"
+gh api -X PUT "repos/$REPO/pulls/$PR/merge" -f merge_method=squash --jq .sha
+# delete_branch_on_merge may have removed it already.
+gh api -X DELETE "repos/$REPO/git/refs/heads/$BRANCH" >/dev/null 2>&1 || true
 merge_ref_gone() {
   [ -z "$(git ls-remote "https://github.com/$REPO" "refs/pull/$PR/merge")" ] && echo gone
 }
@@ -95,7 +108,7 @@ git ls-remote "https://github.com/$REPO" "refs/heads/$BRANCH" | grep -q . \
   && fail "branch $BRANCH still exists"
 echo "branch and refs/pull/$PR/merge gone, refs/pull/$PR/head present"
 
-echo "== 4. re-run run $RUN after the PR is gone"
+echo "== 4. re-run run $RUN after the PR merged"
 gh run rerun "$RUN" --repo "$REPO"
 wait_for "run $RUN attempt 2" attempt_done "$RUN" 2 >/dev/null
 
@@ -108,7 +121,7 @@ echo "attempt 2 fixed: $fixed, control: $control"
 job_log "$RUN" control | grep -q 'unknown revision' \
   || fail "control failed, but not on 'unknown revision': the race was not what failed it"
 
-[ "$fixed" = success ] || fail "fixed is '$fixed' after the PR is gone: the action does not survive the race"
+[ "$fixed" = success ] || fail "fixed is '$fixed' after the PR merged: the action does not survive the race"
 scanned=$(job_log "$RUN" fixed | grep -oE '[0-9]+ commits? scanned' | grep -oE '^[0-9]+' | tail -1)
 [ "${scanned:-0}" -ge 1 ] || fail "fixed passed but scanned '${scanned:-nothing}' commits"
 

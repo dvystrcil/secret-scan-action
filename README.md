@@ -74,8 +74,11 @@ The test stages the race for real (`tests/race-test.sh`):
 
 1. It opens a throwaway PR (`race-probe/*`) from the code under test.
    `race-probe.yml` passes on it in both arms.
-2. It closes the PR, deletes the branch, and waits until `refs/pull/N/merge` is gone.
-3. It re-runs the probe, so the run starts after its PR is gone.
+2. It squash-merges the PR into its own throwaway base branch (`race-base/*`, never
+   `main`), deletes the head branch, and waits until `refs/pull/N/merge` is gone.
+   It has to be a squash merge, as in homelab#2077: a PR that is only closed keeps
+   its test merge commit fetchable, and the pre-fix template passes.
+3. It re-runs the probe, so the run starts after its PR merged.
 4. The re-run must show:
    - **fixed** (this commit's action) passes, having scanned at least 1 commit.
    - **control** (the template before the fix) fails with `unknown revision`.

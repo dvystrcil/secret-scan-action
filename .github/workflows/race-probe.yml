@@ -3,9 +3,10 @@ name: race-probe
 # The PR side of the late-run race test. Only race-test.yml's throwaway PRs
 # (branches race-probe/*) run these jobs; every other PR shows them skipped.
 #
-# race-test.sh lets this run once, closes the PR, deletes the branch, waits
-# until refs/pull/N/merge is gone, and re-runs it. The re-run is a
-# pull_request run starting after its PR is gone, the homelab#2079 race:
+# race-test.sh lets this run once, squash-merges the PR into a throwaway base
+# branch, deletes the head branch, waits until refs/pull/N/merge is gone, and
+# re-runs it. The re-run is a pull_request run starting after its PR merged,
+# the homelab#2079 race:
 #   fixed   - this commit's action; must still scan the PR's commits
 #   control - the template before the fix; must die on 'unknown revision',
 #             which proves the race really was staged
