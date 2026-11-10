@@ -76,9 +76,13 @@ The test stages the race for real (`tests/race-test.sh`):
    `race-probe.yml` passes on it in both arms.
 2. It squash-merges the PR into its own throwaway base branch (`race-base/*`, never
    `main`), deletes the head branch, and waits until `refs/pull/N/merge` is gone.
-   It has to be a squash merge, as in homelab#2077: a PR that is only closed keeps
-   its test merge commit fetchable, and the pre-fix template passes.
-3. It re-runs the probe, so the run starts after its PR merged.
+3. The merge fires the probe's `closed` run. Once that has finished, the test
+   re-runs it, so it certainly starts with the branch gone. The run was created
+   after the squash merge, so its SHA is the squash commit, which doesn't contain the PR's
+   commits. That is homelab#2077's exact shape. Two shapes that look similar don't
+   reproduce it: a PR that is only closed, and a re-run of the run from while the PR
+   was open. In both, the test merge commit stays fetchable and the pre-fix template
+   passes.
 4. The re-run must show:
    - **fixed** (this commit's action) passes, having scanned at least 1 commit.
    - **control** (the template before the fix) fails with `unknown revision`.

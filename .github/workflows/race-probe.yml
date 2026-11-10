@@ -3,16 +3,19 @@ name: race-probe
 # The PR side of the late-run race test. Only race-test.yml's throwaway PRs
 # (branches race-probe/*) run these jobs; every other PR shows them skipped.
 #
-# race-test.sh lets this run once, squash-merges the PR into a throwaway base
-# branch, deletes the head branch, waits until refs/pull/N/merge is gone, and
-# re-runs it. The re-run is a pull_request run starting after its PR merged,
-# the homelab#2079 race:
+# race-test.sh lets this run once with the PR open, squash-merges the PR into
+# a throwaway base branch, deletes the head branch, and re-runs the run the
+# merge fired (`closed`). That run was created after the squash merge, so its
+# sha is the squash commit and the merge ref is gone: the homelab#2077 race
+# (see tests/race-test.sh for the shapes that do not reproduce it):
 #   fixed   - this commit's action; must still scan the PR's commits
 #   control - the template before the fix; must die on 'unknown revision',
 #             which proves the race really was staged
 
 on:
   pull_request:
+    # opened etc. for the sanity run; closed is the late run (fired by the merge)
+    types: [opened, synchronize, reopened, closed]
 
 permissions:
   contents: read

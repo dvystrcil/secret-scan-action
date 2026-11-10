@@ -8,14 +8,20 @@
 #      while the PR exists, so its later failure is the race, not a broken job)
 #   3. SQUASH-MERGE it into race-base, delete the head branch, wait until
 #      refs/pull/N/merge is gone
-#   4. re-run the probe: a pull_request run starting after its PR merged
+#   4. the merge fires race-probe's pull_request `closed` run; once that has
+#      finished, re-run it, so it certainly starts with the branch gone
 #
-# Why a squash merge and not a close: after a squash merge the run's sha is
-# the squash commit, which does not contain the PR's commits, so a default
-# checkout can't reach them (homelab#2077's real failure). A merely CLOSED
-# PR's test merge commit stays fetchable by sha, and the pre-fix template
-# passes (tried 2026-11-10, run 42875520650). Merging into a throwaway base
-# branch keeps main untouched; it is deleted afterwards.
+# What makes it the homelab#2077 race: a pull_request run CREATED after the
+# squash merge. Its sha is the squash commit, which does not contain the
+# PR's commits, and its merge ref is gone, so a default checkout cannot reach
+# them. The `closed` run is created after the merge every time; a re-run
+# keeps its sha. Two shapes that do NOT reproduce it (tried 2026-11-10):
+#   - close without merging: the test merge commit stays fetchable by sha
+#     (run 42875520650);
+#   - re-run the run from while the PR was open: a re-run keeps the old
+#     test merge sha, still fetchable (run 42875923046).
+# Merging into a throwaway base branch keeps main untouched; both branches
+# are deleted afterwards.
 #   5. fixed must pass having scanned >= 1 commit; control must fail with
 #      'unknown revision', which shows the race was really staged
 #
@@ -51,9 +57,11 @@ wait_for() {
   done
 }
 
+# race-probe runs for the probe commit other than $1 (newest first).
 probe_run() {
   gh run list --repo "$REPO" --workflow race-probe.yml --commit "$PROBE_SHA" \
-    --event pull_request --json databaseId --jq '.[0].databaseId // empty'
+    --event pull_request --json databaseId \
+    --jq "[.[] | select(.databaseId != ${1:-0})][0].databaseId // empty"
 }
 
 # Print the run id once attempt $2 of run $1 has completed.
@@ -86,10 +94,10 @@ PR=$(gh pr create --repo "$REPO" --base "$BASE" --head "$BRANCH" \
 echo "PR #$PR, probe commit $PROBE_SHA"
 
 echo "== 2. first run, PR open"
-RUN=$(wait_for "the race-probe run" probe_run)
-wait_for "run $RUN attempt 1" attempt_done "$RUN" 1 >/dev/null
+OPEN_RUN=$(wait_for "the race-probe run" probe_run)
+wait_for "run $OPEN_RUN attempt 1" attempt_done "$OPEN_RUN" 1 >/dev/null
 for job in fixed control; do
-  c=$(job_field "$RUN" "$job" conclusion)
+  c=$(job_field "$OPEN_RUN" "$job" conclusion)
   echo "attempt 1 $job: $c"
   [ "$c" = success ] || fail "attempt 1: $job is '$c', expected success (PR still open)"
 done
@@ -108,7 +116,10 @@ git ls-remote "https://github.com/$REPO" "refs/heads/$BRANCH" | grep -q . \
   && fail "branch $BRANCH still exists"
 echo "branch and refs/pull/$PR/merge gone, refs/pull/$PR/head present"
 
-echo "== 4. re-run run $RUN after the PR merged"
+echo "== 4. the 'closed' run, re-run with the branch gone"
+RUN=$(wait_for "the race-probe run for the merge" probe_run "$OPEN_RUN")
+wait_for "run $RUN attempt 1" attempt_done "$RUN" 1 >/dev/null
+echo "run $RUN attempt 1 (branch deletion may have raced it): fixed=$(job_field "$RUN" fixed conclusion) control=$(job_field "$RUN" control conclusion)"
 gh run rerun "$RUN" --repo "$REPO"
 wait_for "run $RUN attempt 2" attempt_done "$RUN" 2 >/dev/null
 
