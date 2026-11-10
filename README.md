@@ -55,8 +55,14 @@ for homelab#2079:
 
 ## Releasing
 
-Consumers pin `@v1`, so **moving `v1` is the release** to every repo. Merging to
+Consumers reference `@v1`, so **moving `v1` is the release** to every repo. Merging to
 `main` releases nothing.
+
+**Pinning ([homelab D-042](https://github.com/dvystrcil/homelab/blob/main/architecture/ways-of-working.md)):**
+callers use this action by tag, never by SHA, so a fix ships by moving `v1`. Inside,
+`actions/checkout` and `gitleaks-action` are pinned to commit SHAs, because their tags
+are outside our control. Renovate bumps those SHAs here, and they reach callers on
+the next release.
 
 ```bash
 # first release only: v0.0.0 -> v1.0.0, creates v1

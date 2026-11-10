@@ -23,7 +23,7 @@ jobs:
   checks-out-the-pr-head:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./
       - name: HEAD is the PR head (or the pushed commit), with full history
         env:
